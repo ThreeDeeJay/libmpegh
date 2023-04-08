@@ -1835,14 +1835,22 @@ IA_ERRORCODE ia_core_coder_dec_process_frame_zero(VOID *temp_handle, WORD32 *num
 
   if (pstr_asc->str_usac_config.signals_3d.format_converter_enable == 1)
   {
-    impeghd_format_conv_init(handle, pstr_asc, num_channel_out, 0,
+    WORD32 err = impeghd_format_conv_init(handle, pstr_asc, num_channel_out, 0,
                              mpegh_dec_handle->mpeghd_scratch_mem_v);
+    if (err)
+    {
+      return err;
+    }
   }
 
   if (pstr_asc->str_usac_config.signals_3d.domain_switcher_enable == 1)
   {
-    impeghd_format_conv_init(handle, pstr_asc, num_channel_out, 1,
+    WORD32 err = impeghd_format_conv_init(handle, pstr_asc, num_channel_out, 1,
                              mpegh_dec_handle->mpeghd_scratch_mem_v);
+    if (err)
+    {
+      return err;
+    }
   }
   if (suitable_tracks <= 0)
   {
@@ -1862,9 +1870,11 @@ IA_ERRORCODE ia_core_coder_dec_process_frame_zero(VOID *temp_handle, WORD32 *num
     }
   }
   pstr_dec_data->dec_bit_buf.max_size = handle->p_mem_info_mpeghd[IA_MEMTYPE_INPUT].ui_size << 3;
-  if (pstr_asc->str_usac_config.signals_3d.format_converter_enable == 0 && hoa_present == 0 &&
-      oam_present == 0)
+  if ((hoa_present == 0 && oam_present == 0) ||
+      (pstr_asc->str_usac_config.signals_3d.format_converter_enable == 1))
     *num_channel_out = pstr_dec_data->str_frame_data.scal_out_num_channels; // check
+  else if (pstr_asc->str_usac_config.signals_3d.format_converter_enable == 1)
+    *num_channel_out = pstr_dec_data->str_frame_data.scal_out_num_channels;
   if (hoa_present == 1)
   {
     // pstr_dec_data->str_frame_data.scal_out_num_channels = *num_channel_out;
@@ -2073,6 +2083,8 @@ IA_ERRORCODE ia_core_coder_dec_ext_ele_proc(VOID *temp_handle, WORD32 *num_chann
       {
         pcm_sample =
             (WORD32)(pstr_dec_data->str_usac_data.time_sample_vector[channel][s] * 256.0f);
+        pcm_sample = ia_max_int(ia_min_int(pcm_sample, MAX_24), MIN_24);
+
         *ptr_ext_ren_pcm++ = (WORD32)pcm_sample & 0xff;
         *ptr_ext_ren_pcm++ = ((WORD32)pcm_sample >> 8) & 0xff;
         *ptr_ext_ren_pcm++ = ((WORD32)pcm_sample >> 16) & 0xff;
@@ -2376,7 +2388,7 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
   ia_audio_specific_config_struct *pstr_asc =
       (ia_audio_specific_config_struct *)mpegh_dec_handle->ia_audio_specific_config;
   ia_dec_data_struct *pstr_dec_data;
-  ia_mhas_pac_info pac_info;
+  ia_mhas_pac_info pac_info = {0};
   ia_signals_3d *ia_signals_3da = &pstr_asc->str_usac_config.signals_3d;
   ia_usac_decoder_config_struct *str_usac_dec_config =
       &pstr_asc->str_usac_config.str_usac_dec_config;
