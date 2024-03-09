@@ -573,10 +573,6 @@ IA_ERRORCODE impeghd_format_conv_init(ia_mpegh_dec_api_struct *p_obj_mpegh_dec,
 
         if (pstr_signals_3d->differs_from_ref_layout[i] == 1)
         {
-          if (cicp_idx == 0 || cicp_idx == 8 || cicp_idx > NUM_LS_CFGS)
-          {
-            return IA_MPEGH_DEC_INIT_FATAL_INVALID_CICP_SPKR_INDEX;
-          }
           num_chnl_in = impgehd_cicp_get_num_ls[cicp_idx];
           ptr_chn_in_name = ia_cicp_idx_ls_set_map_tbl[cicp_idx];
         }
@@ -1743,15 +1739,19 @@ IA_ERRORCODE ia_core_coder_dec_process_frame_zero(VOID *temp_handle, WORD32 *num
       {
       case ID_EXT_ELE_UNI_DRC:
       {
-        pstr_dec_data->str_drc_payload.pstr_drc_config =
-            &pstr_dec_data->str_frame_data.str_audio_specific_config.str_usac_config.uni_drc_cfg;
-        err_code =
-            impeghd_uni_drc_dec_init(pstr_asc, pstr_dec_data, target_loudness, loudness_norm_flag,
-                                     drc_effect_type, mpegh_dec_handle->p_config->i_preset_id,
-                                     mpegh_dec_handle->p_config->ui_cicp_layout_idx, ele_idx);
-        if (err_code)
+        if (handle->mpeghd_config.drc_apply == 1)
         {
-          return err_code;
+          pstr_dec_data->str_drc_payload.pstr_drc_config =
+              &pstr_asc->str_usac_config.uni_drc_cfg;
+          err_code =
+              impeghd_uni_drc_dec_init(pstr_asc, pstr_dec_data, target_loudness,
+                                       loudness_norm_flag, drc_effect_type,
+                                       mpegh_dec_handle->p_config->i_preset_id,
+                                       mpegh_dec_handle->p_config->ui_cicp_layout_idx, ele_idx);
+          if (err_code)
+          {
+            return err_code;
+          }
         }
       }
       break;
@@ -2109,7 +2109,8 @@ IA_ERRORCODE ia_core_coder_dec_ext_ele_proc(VOID *temp_handle, WORD32 *num_chann
   for (ele = 0; ele < num_elements; ele++)
   {
     if ((ID_EXT_ELE_UNI_DRC == pstr_usac_dec_cfg->ia_ext_ele_payload_type[ele]) &&
-        (pstr_usac_dec_cfg->usac_ext_ele_payload_present[ele]))
+        (pstr_usac_dec_cfg->usac_ext_ele_payload_present[ele]) &&
+        (handle->mpeghd_config.drc_apply == 1))
     {
       // domain switcher
       UWORD32 dom_swi_flag = pstr_asc->str_usac_config.signals_3d.domain_switcher_enable;
@@ -2392,10 +2393,13 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
   ia_signals_3d *ia_signals_3da = &pstr_asc->str_usac_config.signals_3d;
   ia_usac_decoder_config_struct *str_usac_dec_config =
       &pstr_asc->str_usac_config.str_usac_dec_config;
+  WORD8 *ptr_scratch = (WORD8 *)mpegh_dec_handle->mpeghd_scratch_mem_v;
+  WORD8 (*ptr_cfg_buf)[MAX_CFG_DATA_LENGTH] = (WORD8(*)[MAX_CFG_DATA_LENGTH])ptr_scratch;
 
   target_loudness = handle->mpeghd_config.ui_target_loudness;
   loudness_norm_flag = handle->mpeghd_config.ui_loud_norm_flag;
   drc_effect_type = (handle->mpeghd_config.ui_effect_type);
+  mpegh_dec_handle->flush = 0;
 
   out_ch_map = pstr_asc->str_usac_config.str_usac_dec_config.num_output_chns;
 
@@ -2465,6 +2469,16 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
         ((handle->mpeghd_config.ui_target_loudness_set) ||
          (pstr_dec_data->str_drc_payload.pstr_drc_config != NULL)))
     {
+      WORD32 index = 0;
+      for (WORD32 i = 0; i < MAX_ELEMENTS_USAC; i++)
+      {
+        if (ID_EXT_ELE_UNI_DRC ==
+             pstr_asc->str_usac_config.str_usac_dec_config.ia_ext_ele_payload_type[i])
+        {
+          index = i;
+          break;
+        }
+      }
       memset(&pstr_dec_data->str_drc_payload.str_select_proc, 0,
              sizeof(pstr_dec_data->str_drc_payload.str_select_proc));
       pstr_dec_data->str_drc_payload.pstr_drc_config =
@@ -2472,7 +2486,7 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
       err_code =
           impeghd_uni_drc_dec_init(pstr_asc, pstr_dec_data, target_loudness, loudness_norm_flag,
                                    drc_effect_type, mpegh_dec_handle->p_config->i_preset_id,
-                                   mpegh_dec_handle->p_config->ui_cicp_layout_idx, 0);
+                                   mpegh_dec_handle->p_config->ui_cicp_layout_idx, index);
       if (err_code)
       {
         return err_code;
@@ -2490,69 +2504,88 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
       if (MHAS_PAC_TYP_MPEGH3DACFG == pac_info.packet_type)
       {
         WORD32 bytes_consumed;
-
-        if (pstr_asc->str_usac_config.str_usac_dec_config.preroll_flag != 0)
+        WORD32 flush = 0;
+        if (mpegh_dec_handle->prev_cfg_len)
         {
-          ia_core_coder_decoder_flush_api(handle);
+          WORD32 i = 0;
+          WORD32 bit_pos = pstr_dec_data->dec_bit_buf.bit_pos;
+          WORD32 cnt_bits = pstr_dec_data->dec_bit_buf.cnt_bits;
+          WORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
+          WORD32 cmp_len = pac_info.packet_length;
+          for (i = 0; i < pac_info.packet_length; i++)
+          {
+            (*ptr_cfg_buf)[i] = ia_core_coder_read_bits_buf(&pstr_dec_data->dec_bit_buf, 8);
+          }
+          if ((cmp_len != mpegh_dec_handle->prev_cfg_len) ||
+              memcmp(&(*ptr_cfg_buf)[0], &mpegh_dec_handle->prev_cfg_data[0], cmp_len))
+          {
+            flush = 1;
+            memcpy(&mpegh_dec_handle->prev_cfg_data[0], &(*ptr_cfg_buf)[0],
+                   pac_info.packet_length);
+            mpegh_dec_handle->prev_cfg_len = pac_info.packet_length;
+          }
+          pstr_dec_data->dec_bit_buf.bit_pos = bit_pos;
+          pstr_dec_data->dec_bit_buf.cnt_bits = cnt_bits;
+          pstr_dec_data->dec_bit_buf.ptr_read_next = ptr_read_next;
+          if (flush)
+          {
+            err_code = ia_core_coder_decoder_flush_api(handle);
+            return err_code;
+          }
         }
-        err_code = impegh_3daudio_config_dec(mpegh_dec_handle, &bytes_consumed,
-                                             &pstr_dec_data->dec_bit_buf);
-        if (handle->p_state_mpeghd->frame_counter ==
-            1) /* config bytes passed with 1st decode call */
+        else
         {
-          if (err_code < 0)
+          WORD32 i = 0;
+          WORD32 bit_pos = pstr_dec_data->dec_bit_buf.bit_pos;
+          WORD32 cnt_bits = pstr_dec_data->dec_bit_buf.cnt_bits;
+          WORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
+          mpegh_dec_handle->prev_cfg_len = pac_info.packet_length;
+          for (i = 0; i < pac_info.packet_length; i++)
           {
-            if (err_code == (WORD32)IA_MPEGH_DEC_INIT_FATAL_STREAM_CHAN_GT_MAX)
-            {
-              mpegh_dec_handle->i_bytes_consumed = bytes_consumed;
-              return err_code;
-            }
-
-            return err_code;
+            mpegh_dec_handle->prev_cfg_data[i] =
+                ia_core_coder_read_bits_buf(&pstr_dec_data->dec_bit_buf, 8);
           }
-
-          if (err_code == IA_MPEGH_DEC_EXE_NONFATAL_INSUFFICIENT_INPUT_BYTES)
-          {
-            mpegh_dec_handle->i_bytes_consumed = bytes_consumed;
-            return err_code;
-          }
-
-          mpegh_dec_handle->i_bytes_consumed = bytes_consumed;
-
+          pstr_dec_data->dec_bit_buf.bit_pos = bit_pos;
+          pstr_dec_data->dec_bit_buf.cnt_bits = cnt_bits;
+          pstr_dec_data->dec_bit_buf.ptr_read_next = ptr_read_next;
+        }
+        mpegh_dec_handle->flush = flush;
+        if (!flush)
+        {
+          err_code = impegh_3daudio_config_dec(mpegh_dec_handle, &bytes_consumed,
+                                               &pstr_dec_data->dec_bit_buf);
           if (err_code == IA_MPEGH_DEC_NO_ERROR)
           {
-            {
-              WORD32 pcm_size = handle->mpeghd_config.ui_pcm_wdsz;
-              WORD8 *inbuffer = handle->pp_mem_mpeghd[INPUT_IDX];
-              WORD8 *outbuffer = handle->pp_mem_mpeghd[OUTPUT_IDX];
-              WORD32 out_bytes = 0;
-              WORD32 frames_done = 0;
-              mpegh_dec_handle->decode_create_done = 0;
-
-              err_code =
-                  ia_core_coder_dec_main(handle, inbuffer, outbuffer, &out_bytes, frames_done,
-                                         pcm_size, &handle->p_state_mpeghd->num_of_output_ch);
-              if (err_code != IA_MPEGH_DEC_NO_ERROR)
-              {
-                return err_code;
-              }
-              // handle->p_state_mpeghd->frame_counter++;
-
-              handle->mpeghd_config.ui_n_channels = handle->p_state_mpeghd->num_of_output_ch;
-            }
-            if (err_code == 0)
-              handle->p_state_mpeghd->ui_init_done = 1;
-            // return err;
+            handle->p_state_mpeghd->ui_init_done = 1;
+          }
+          else
+          {
+            mpegh_dec_handle->i_bytes_consumed = bytes_consumed;
+            handle->p_state_mpeghd->ui_init_done = 0;
+            return err_code;
           }
         }
-        if (err_code == 0)
+        if (handle->p_state_mpeghd->frame_counter ==
+            0) /* config bytes passed with 1st decode call */
         {
-          mpegh_dec_handle->ui_init_done = 1;
+          WORD32 pcm_size = handle->mpeghd_config.ui_pcm_wdsz;
+          WORD8 *inbuffer = handle->pp_mem_mpeghd[INPUT_IDX];
+          WORD8 *outbuffer = handle->pp_mem_mpeghd[OUTPUT_IDX];
+          WORD32 out_bytes = 0;
+          WORD32 frames_done = 0;
+          mpegh_dec_handle->decode_create_done = 0;
+
+          err_code =
+              ia_core_coder_dec_main(handle, inbuffer, outbuffer, &out_bytes, frames_done,
+                                     pcm_size, &handle->p_state_mpeghd->num_of_output_ch);
+          if (err_code != IA_MPEGH_DEC_NO_ERROR)
+          {
+            return err_code;
+          }
+
+          handle->mpeghd_config.ui_n_channels = handle->p_state_mpeghd->num_of_output_ch;
         }
-        if (err_code != IA_MPEGH_DEC_NO_ERROR)
-        {
-          return err_code;
-        }
+
         if (pstr_asc->str_usac_config.str_usac_dec_config.preroll_flag != 0)
         {
           err_code = ia_core_coder_decode_create(
@@ -3156,7 +3189,8 @@ IA_ERRORCODE impeghd_uni_drc_dec_init(ia_audio_specific_config_struct *pstr_audi
     }
   }
 
-  memset(&pstr_drc_payload->str_drc_interface, 0, sizeof(pstr_drc_payload->str_drc_interface));
+  memset(&pstr_drc_payload->str_drc_interface, 0,
+         sizeof(pstr_drc_payload->str_drc_interface));
 
   if (control_parameter_index <= 0)
   {
@@ -3282,7 +3316,7 @@ IA_ERRORCODE impeghd_uni_drc_dec_init(ia_audio_specific_config_struct *pstr_audi
         pstr_dec_data->str_drc_payload.str_bitstream_dec.ia_drc_params_struct;
     err_code = impd_drc_parse_config(pstr_dec_data->str_drc_payload.pstr_drc_config,
                                      &pstr_usac_cfg->str_loudness_info, &it_bit_buff,
-                                     &pstr_usac_cfg->uni_drc_bs_params, pstr_mae_asi);
+                                     &pstr_usac_cfg->uni_drc_bs_params);
     if (err_code != IA_MPEGH_DEC_NO_ERROR)
     {
       return err_code;
@@ -3298,7 +3332,7 @@ IA_ERRORCODE impeghd_uni_drc_dec_init(ia_audio_specific_config_struct *pstr_audi
         pstr_dec_data->str_drc_payload.str_bitstream_dec.ia_drc_params_struct;
     err_code = impd_drc_parse_config(pstr_dec_data->str_drc_payload.pstr_drc_config,
                                      &pstr_usac_cfg->str_loudness_info, &it_bit_buff,
-                                     &pstr_usac_cfg->uni_drc_bs_params, pstr_mae_asi);
+                                     &pstr_usac_cfg->uni_drc_bs_params);
 
     if (err_code != IA_MPEGH_DEC_NO_ERROR)
     {
@@ -3315,7 +3349,7 @@ IA_ERRORCODE impeghd_uni_drc_dec_init(ia_audio_specific_config_struct *pstr_audi
     it_bit_buff.xmpeghd_jmp_buf = pstr_dec_data->dec_bit_buf.xmpeghd_jmp_buf;
 
     err_code = impd_drc_mpegh3da_parse_loudness_info_set(&pstr_drc_payload->str_loud_info,
-                                                         &it_bit_buff, pstr_mae_asi);
+                                                         &it_bit_buff);
     if (err_code != IA_MPEGH_DEC_NO_ERROR)
     {
       return err_code;

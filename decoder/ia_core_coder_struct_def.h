@@ -75,11 +75,11 @@ typedef struct
   WORD32 ui_effect_type;
   WORD32 ui_target_loudness;
   WORD32 ui_target_loudness_set;
+  WORD32 drc_apply;
   WORD32 ui_loud_norm_flag;
   WORD32 ui_cicp_layout_idx;
   UWORD32 header_dec_done;
   UWORD32 ui_max_channels;
-  WORD32 ui_flush_cmd;
 
   WORD32 ui_mhas_flag;
   WORD8 i_preset_id;
@@ -151,11 +151,7 @@ typedef struct ia_mpegh_dec_state_struct
 
   VOID *pstr_dec_data;
 
-  UWORD8 *header_ptr;
-  WORD32 header_length;
-
   WORD32 decode_create_done;
-  WORD32 fatal_err_present;
   WORD32 delay_in_samples;
   WORD32 is_base_line_profile_3b;
   UWORD8 preroll_config_prev[288]; // max of escapedValue(4, 4, 8) i.e. 2^4 -1  + 2^4 -1 + 2^8 -1;
@@ -163,6 +159,9 @@ typedef struct ia_mpegh_dec_state_struct
   ia_format_conv_state_struct state_format_conv;
   ia_ds_state_struct state_domain_switcher;
   jmp_buf *xmpeghd_jmp_buf;
+  WORD8 prev_cfg_data[MAX_CFG_DATA_LENGTH];
+  WORD32 prev_cfg_len;
+  WORD32 flush;
 } ia_mpegh_dec_state_struct;
 
 typedef struct ia_mpegh_dec_api_struct
