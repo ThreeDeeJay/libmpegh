@@ -1,11 +1,17 @@
 cmake_minimum_required (VERSION 3.8)
 
-project (MPEG-H_Decoder VERSION 1.3)
+project (MPEG-H_Decoder VERSION 1.6)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_SUPPRESS_REGENERATION true)
+
+option(LC_LEVEL_4 "Enables low complexity level 4 decoder" OFF)
+
+IF(LC_LEVEL_4)
+	ADD_DEFINITIONS(-DLC_LEVEL_4)
+ENDIF()
 
 # Add Library Target
 add_library (

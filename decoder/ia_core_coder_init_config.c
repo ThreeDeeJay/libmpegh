@@ -236,10 +236,21 @@ IA_ERRORCODE ia_core_coder_ext_element_config(
   {
   case ID_EXT_ELE_PROD_METADATA:
   {
+    cnt_bits = it_bit_buff->cnt_bits;
     err_code = impeghd_prod_metadata_config(it_bit_buff, pstr_usac_conf);
     if (err_code)
     {
       return err_code;
+    }
+    cnt_bits = (cnt_bits - it_bit_buff->cnt_bits);
+    if (cnt_bits > (WORD32)(usac_ext_element_config_length << 3))
+    {
+      return IA_MPEGH_DEC_EXE_FATAL_DECODE_FRAME_ERROR;
+    }
+    else if (cnt_bits < (WORD32)(usac_ext_element_config_length << 3))
+    {
+      skip_bits = (usac_ext_element_config_length << 3) - cnt_bits;
+      ia_core_coder_skip_bits_buf(it_bit_buff, skip_bits);
     }
     break;
   }
@@ -1622,12 +1633,14 @@ IA_ERRORCODE ia_core_coder_mpegh_3da_config(ia_bit_buf_struct *it_bit_buff,
         mpeghd_state_struct->is_base_line_profile_3b = 1;
       }
     }
-    else if (compat_lc_lvl <= MPEGH_PROFILE_LC_LVL_3 && compat_lc_lvl >= MPEGH_PROFILE_LC_LVL_1)
+    else if ((compat_lc_lvl <= MAXIMUM_SUPPORTED_LC_PROFILE) &&
+              (compat_lc_lvl >= MINIMUM_SUPPORTED_LC_PROFILE))
     {
       mpeghd_state_struct->is_base_line_profile_3b = 0;
       mpegh_profile_lvl = compat_lc_lvl;
     }
   }
+
   switch (mpegh_profile_lvl)
   {
   case MPEGH_PROFILE_LC_LVL_1:
@@ -1655,6 +1668,19 @@ IA_ERRORCODE ia_core_coder_mpegh_3da_config(ia_bit_buf_struct *it_bit_buff,
       return IA_MPEGH_DEC_INIT_FATAL_STREAM_CHAN_GT_MAX;
     }
     break;
+#ifdef LC_LEVEL_4
+  case MPEGH_PROFILE_BP_LVL_4:
+  case MPEGH_PROFILE_LC_LVL_4:
+    if (dec_proc_core_chans > MAX_NUM_CHANNELS || ref_layout_chans > MAX_NUM_CHANNELS ||
+        (dec_proc_core_chans > MAX_NUM_CHANNELS_LVL4 &&
+            (num_hoa_based_grps != 0 || num_ch_based_grps != 0)) ||
+          (ref_layout_chans > MAX_NUM_CHANNELS_LVL4 &&
+            (num_hoa_based_grps != 0 || num_ch_based_grps != 0)))
+    {
+      return IA_MPEGH_DEC_INIT_FATAL_STREAM_CHAN_GT_MAX;
+    }
+    break;
+#endif
   default:
     return IA_MPEGH_DEC_INIT_FATAL_UNSUPPORTED_MPEGH_PROFILE;
     break;

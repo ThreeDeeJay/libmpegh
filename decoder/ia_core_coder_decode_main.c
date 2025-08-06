@@ -2179,7 +2179,7 @@ IA_ERRORCODE ia_core_coder_dec_ext_ele_proc(VOID *temp_handle, WORD32 *num_chann
                                           mpegh_dec_handle->p_config->ptr_oam_md_bit_buf, 768, 1);
           impeghd_write_oam_meta_data_for_ext_ren(
               &str_bit_buf, pstr_usac_config, &pstr_dec_data->str_obj_ren_dec_state,
-              ia_signals_3da, &pstr_dec_data->str_enh_obj_md_frame);
+              ia_signals_3da, &pstr_dec_data->str_enh_obj_md_frame, &pstr_asc->str_mae_asi);
           mpegh_dec_handle->p_config->oam_md_payload_length = (str_bit_buf.cnt_bits + 7) >> 3;
         }
         if (pstr_usac_config->signals_3d.num_ch != 0)
@@ -2510,7 +2510,7 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
           WORD32 i = 0;
           WORD32 bit_pos = pstr_dec_data->dec_bit_buf.bit_pos;
           WORD32 cnt_bits = pstr_dec_data->dec_bit_buf.cnt_bits;
-          WORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
+          UWORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
           WORD32 cmp_len = pac_info.packet_length;
           for (i = 0; i < pac_info.packet_length; i++)
           {
@@ -2538,7 +2538,7 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
           WORD32 i = 0;
           WORD32 bit_pos = pstr_dec_data->dec_bit_buf.bit_pos;
           WORD32 cnt_bits = pstr_dec_data->dec_bit_buf.cnt_bits;
-          WORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
+          UWORD8 *ptr_read_next = pstr_dec_data->dec_bit_buf.ptr_read_next;
           mpegh_dec_handle->prev_cfg_len = pac_info.packet_length;
           for (i = 0; i < pac_info.packet_length; i++)
           {
@@ -2911,13 +2911,6 @@ IA_ERRORCODE ia_core_coder_dec_main(VOID *temp_handle, WORD8 *inbuffer, WORD8 *o
                   .str_usac_dec_config.usac_ext_gain_payload_len[cnt] *
               sizeof(WORD8);
         }
-
-        memcpy(pstr_asc->str_usac_config.str_usac_dec_config.usac_ext_gain_payload_buf[cnt] +
-                   payload_buffer_offeset,
-               pstr_dec_data->str_frame_data.str_audio_specific_config.str_usac_config
-                       .str_usac_dec_config.usac_ext_gain_payload_buf[cnt] +
-                   payload_buffer_offeset,
-               copy_bytes);
 
         pstr_asc->str_usac_config.str_usac_dec_config.preroll_bytes[preroll_counter] = *out_bytes;
 
